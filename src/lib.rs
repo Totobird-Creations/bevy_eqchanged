@@ -1,4 +1,12 @@
+#![doc = include_str!("../README.md")]
+
+
 use core::marker::PhantomData;
+#[cfg(not(feature = "intmap"))]
+use std::collections::{
+    BTreeMap as HandledMap,
+    btree_map::Entry as HandledMapEntry
+};
 use bevy_ecs::{
     archetype::Archetype,
     component::{
@@ -24,9 +32,10 @@ use bevy_ecs::{
         EntityWorldMut
     }
 };
+#[cfg(feature = "intmap")]
 use intmap::{
-    IntMap,
-    Entry as IntMapEntry
+    IntMap as HandledMap,
+    Entry as HandledMapEntry
 };
 
 
@@ -34,13 +43,10 @@ use intmap::{
 struct NextQueryId(usize);
 
 #[derive(Component)]
-struct PreviousValues<T> {
-    by_query_id : IntMap<usize, T>
-}
-impl<T> Default for PreviousValues<T> {
-    fn default() -> Self {
-        Self { by_query_id : IntMap::new() }
-    }
+struct PreviousValue<T> {
+    previous : T,
+    changed  : Tick,
+    handled  : HandledMap<usize, Tick>
 }
 
 
@@ -53,7 +59,7 @@ where
 {
     query_id : usize,
     changed  : <Changed<T> as WorldQuery>::State,
-    old      : <Option<&'static mut PreviousValues<T>> as WorldQuery>::State,
+    old      : <Option<&'static mut PreviousValue<T>> as WorldQuery>::State,
     new      : <&'static T as WorldQuery>::State
 }
 
@@ -63,8 +69,9 @@ where
 {
     world    : DeferredWorld<'l>,
     query_id : usize,
+    this_run : Tick,
     changed  : <Changed<T> as WorldQuery>::Fetch<'l>,
-    old      : <Option<&'static mut PreviousValues<T>> as WorldQuery>::Fetch<'l>,
+    old      : <Option<&'static mut PreviousValue<T>> as WorldQuery>::Fetch<'l>,
     new      : <&'static T as WorldQuery>::Fetch<'l>
 }
 
@@ -90,39 +97,64 @@ where
         if (! <Changed<T> as QueryFilter>::filter_fetch(&mut fetch.changed, entity, table_row)) {
             return false;
         }
-        let old = <Option<&mut PreviousValues<T>> as QueryData>::fetch(&mut fetch.old, entity, table_row);
+        let old = <Option<&mut PreviousValue<T>> as QueryData>::fetch(&mut fetch.old, entity, table_row);
         let new = <&T as QueryData>::fetch(&mut fetch.new, entity, table_row);
         match (old) {
-            // PreviousValues<T> was not in the current query.
+            // PreviousValue<T> was not in the current query.
             None => {
-                let qid = fetch.query_id;
-                let new = new.clone();
-                // Spawn a new PreviousValues<T>, or edit it if it already exists.
+                let query_id = fetch.query_id;
+                let this_run = fetch.this_run;
+                let new      = new.clone();
                 fetch.world.commands().entity(entity).queue(move |mut world : EntityWorldMut| {
-                    match (world.get_mut::<PreviousValues<T>>()) {
-                        Some(mut previous_values) => {
-                            previous_values.by_query_id.insert(qid, new);
+                    match (world.get_mut::<PreviousValue<T>>()) {
+                        // PreviousValue<T> does actually exist. It was just added in the same tick.
+                        Some(mut previous_value) => {
+                            if (new != previous_value.previous) {
+                                previous_value.previous = new;
+                                previous_value.changed  = this_run;
+                            }
+                            let changed = previous_value.changed;
+                            match (previous_value.handled.entry(query_id)) {
+                                HandledMapEntry::Occupied(mut entry) => {
+                                    if (entry.get() != &changed) {
+                                        entry.insert(changed);
+                                    }
+                                },
+                                HandledMapEntry::Vacant(entry) => {
+                                    entry.insert(changed);
+                                }
+                            }
                         },
+                        // PreviousValue<T> does not exist. Add it.
                         None => {
-                            let mut by_query_id = IntMap::new();
-                            by_query_id.insert(qid, new);
-                            world.insert(PreviousValues { by_query_id });
+                            let mut previous_value = PreviousValue {
+                                previous : new,
+                                changed  : this_run,
+                                handled  : HandledMap::new()
+                            };
+                            previous_value.handled.insert(query_id, this_run);
+                            world.insert(previous_value);
                         }
                     }
                 });
                 true
             },
-            // PreviousValues<T> was in the current query.
-            Some(mut old) => {
-                match (old.by_query_id.entry(fetch.query_id)) {
-                    IntMapEntry::Occupied(mut old_entry) => {
-                        if (old_entry.get() != new) {
-                            old_entry.insert(new.clone());
+            // PreviousValue<T> was in the current query.
+            Some(mut previous_value) => {
+                if (new != &previous_value.previous) {
+                    previous_value.previous = new.clone();
+                    previous_value.changed  = fetch.this_run;
+                }
+                let changed = previous_value.changed;
+                match (previous_value.handled.entry(fetch.query_id)) {
+                    HandledMapEntry::Occupied(mut entry) => {
+                        if (entry.get() != &changed) {
+                            entry.insert(changed);
                             true
                         } else { false }
                     },
-                    IntMapEntry::Vacant(old_entry) => {
-                        old_entry.insert(new.clone());
+                    HandledMapEntry::Vacant(entry) => {
+                        entry.insert(changed);
                         true
                     }
                 }
@@ -145,8 +177,9 @@ where
         EqChangedFetch {
             world    : fetch.world,
             query_id : fetch.query_id,
+            this_run : fetch.this_run,
             changed  : <Changed<T> as WorldQuery>::shrink_fetch(fetch.changed),
-            old      : <Option<&mut PreviousValues<T>> as WorldQuery>::shrink_fetch(fetch.old),
+            old      : <Option<&mut PreviousValue<T>> as WorldQuery>::shrink_fetch(fetch.old),
             new      : <&T as WorldQuery>::shrink_fetch(fetch.new)
         }
     }
@@ -160,15 +193,16 @@ where
         EqChangedFetch {
             world    : world.into_deferred(),
             query_id : state.query_id,
+            this_run,
             changed  : <Changed<T> as WorldQuery>::init_fetch(world, &state.changed, last_run, this_run),
-            old      : <Option<&mut PreviousValues<T>> as WorldQuery>::init_fetch(world, &state.old, last_run, this_run),
+            old      : <Option<&mut PreviousValue<T>> as WorldQuery>::init_fetch(world, &state.old, last_run, this_run),
             new      : <&T as WorldQuery>::init_fetch(world, &state.new, last_run, this_run)
         } }
     }
 
     const IS_DENSE : bool =
         <Changed<T> as WorldQuery>::IS_DENSE
-        && <&mut PreviousValues<T> as WorldQuery>::IS_DENSE
+        && <&mut PreviousValue<T> as WorldQuery>::IS_DENSE
         && <&T as WorldQuery>::IS_DENSE;
 
     unsafe fn set_archetype<'w>(
@@ -178,7 +212,7 @@ where
         table     : &'w Table
     ) { unsafe {
         <Changed<T> as WorldQuery>::set_archetype(&mut fetch.changed, &state.changed, archetype, table);
-        <Option<&mut PreviousValues<T>> as WorldQuery>::set_archetype(&mut fetch.old, &state.old, archetype, table);
+        <Option<&mut PreviousValue<T>> as WorldQuery>::set_archetype(&mut fetch.old, &state.old, archetype, table);
         <&T as WorldQuery>::set_archetype(&mut fetch.new, &state.new, archetype, table);
     } }
 
@@ -188,7 +222,7 @@ where
         table : &'w Table
     ) { unsafe {
         <Changed<T> as WorldQuery>::set_table(&mut fetch.changed, &state.changed, table);
-        <Option<&mut PreviousValues<T>> as WorldQuery>::set_table(&mut fetch.old, &state.old, table);
+        <Option<&mut PreviousValue<T>> as WorldQuery>::set_table(&mut fetch.old, &state.old, table);
         <&T as WorldQuery>::set_table(&mut fetch.new, &state.new, table);
     } }
 
@@ -197,7 +231,7 @@ where
         access : &mut FilteredAccess<ComponentId>
     ) {
         <Changed<T> as WorldQuery>::update_component_access(&state.changed, access);
-        <Option<&mut PreviousValues<T>> as WorldQuery>::update_component_access(&state.old, access);
+        <Option<&mut PreviousValue<T>> as WorldQuery>::update_component_access(&state.old, access);
         <&T as WorldQuery>::update_component_access(&state.new, access);
     }
 
@@ -212,7 +246,7 @@ where
                 query_id
             },
             changed  : <Changed<T> as WorldQuery>::init_state(world),
-            old      : <Option<&mut PreviousValues<T>> as WorldQuery>::init_state(world),
+            old      : <Option<&mut PreviousValue<T>> as WorldQuery>::init_state(world),
             new      : <&T as WorldQuery>::init_state(world)
         }
     }
@@ -226,7 +260,7 @@ where
         set_contains_id : &impl Fn(ComponentId) -> bool,
     ) -> bool {
         <Changed<T> as WorldQuery>::matches_component_set(&state.changed, set_contains_id)
-        && <Option<&mut PreviousValues<T>> as WorldQuery>::matches_component_set(&state.new, set_contains_id)
+        && <Option<&mut PreviousValue<T>> as WorldQuery>::matches_component_set(&state.new, set_contains_id)
         && <&T as WorldQuery>::matches_component_set(&state.new, set_contains_id)
     }
 }

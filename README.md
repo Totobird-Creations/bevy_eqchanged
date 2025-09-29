@@ -13,6 +13,10 @@ Simply *mutably dereferencing* ([`DerefMut`](https://doc.rust-lang.org/nightly/c
  track of the 'previous value' of a component, and only pass the filter if the previous and new values are
  [`!=`](https://doc.rust-lang.org/stable/std/cmp/trait.PartialEq.html#method.ne).
 
+> [!WARNING]
+> Please note that `EqChanged` uses `Clone` to keep track of the previous value.
+> `Changed` should be preferred over `EqChanged` when possible.
+
 
 ### Example
 Here is a crude example of where this might be useful.

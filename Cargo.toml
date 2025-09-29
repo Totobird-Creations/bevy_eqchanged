@@ -3,6 +3,9 @@ name    = "bevy_eqchanged"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = [ "intmap" ]
+intmap  = [ "dep:intmap" ]
 
 [lints.rust]
 unused_parens = "allow"
@@ -19,3 +22,4 @@ default-features = false
 [dependencies.intmap]
 version          = "3.1"
 default-features = false
+optional         = true
