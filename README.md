@@ -1,13 +1,12 @@
 # `bevy_eqchanged`
-A simple library for [bevy](https://github.com/bevyengine/bevy) to detect true changes to components.
+A simple library for [Bevy](https://github.com/bevyengine/bevy) to detect true changes to components.
 
 
 ### Why?
-Bevy has the [`Changed<T>`](https://docs.rs/bevy_ecs/latest/bevy_ecs/query/struct.Changed.html) query filter!
-
-Yes, but it doesn't detect *true* changes to components.
-Simply *mutably dereferencing* ([`DerefMut`](https://doc.rust-lang.org/nightly/core/ops/deref/trait.DerefMut.html))
- a component is considered a 'change'.
+Bevy has the [`Changed<T>`](https://docs.rs/bevy_ecs/latest/bevy_ecs/query/struct.Changed.html) query filter.
+ However, it doesn't detect *true* changes to components. Simply *mutably dereferencing*
+ ([`DerefMut`](https://doc.rust-lang.org/nightly/core/ops/deref/trait.DerefMut.html)) a component is
+ considered a 'change'.
 
 [`EqChanged<T>`](https://docs.rs/bevy_eqchanged/latest/bevy_eqchanged/struct.EqChanged.html) will instead keep
  track of the 'previous value' of a component, and only pass the filter if the previous and new values are
