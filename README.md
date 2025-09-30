@@ -13,9 +13,12 @@ Simply *mutably dereferencing* ([`DerefMut`](https://doc.rust-lang.org/nightly/c
  track of the 'previous value' of a component, and only pass the filter if the previous and new values are
  [`!=`](https://doc.rust-lang.org/stable/std/cmp/trait.PartialEq.html#method.ne).
 
-> [!WARNING]
-> Please note that `EqChanged` uses `Clone` to keep track of the previous value.
-> `Changed` should be preferred over `EqChanged` when possible.
+<div class="warning">
+
+Please note that `EqChanged` uses `Clone` to keep track of the previous value.
+`Changed` should be preferred over `EqChanged` when possible.
+
+</div>
 
 
 ### Example
@@ -53,7 +56,7 @@ fn on_mode_changed(
     players : Query<(Entity, &PlayerMode,), Changed<PlayerMode>>
 ) {
     for (player_entity, player_mode,) in &players {
-        println!("Player {player_entity} changed mode to {player_mode}.");
+        println!("Player {} changed mode to {}.", player_entity, player_mode);
     }
 }
 
@@ -61,7 +64,7 @@ fn on_mode_eqchanged(
     players : Query<(Entity, &PlayerMode,), EqChanged<PlayerMode>>
 ) {
     for (player_entity, player_mode,) in &players {
-        println!("Player {player_entity} EQchanged mode to {player_mode}.");
+        println!("Player {} EQchanged mode to {}.", player_entity, player_mode);
     }
 }
 ```

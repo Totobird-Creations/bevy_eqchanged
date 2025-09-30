@@ -50,37 +50,73 @@ struct PreviousValue<T> {
 }
 
 
+/// A filter on a component that only retains results the first time after they have been added or
+///  modified in a way where the new value [`!=`](PartialEq::ne) the previous.
+///
+/// A common use for this filter is avoiding redundant work when values have not changed.
+///
+/// **Note** that unlike [`Changed`], *mutably dereferencing* a component
+///  is not enough to be considered a change. The new value must [`!=`](PartialEq::ne) the previous.
+///
+/// ### Deferred
+/// Note, that entity modifications issies with [`Commands`](bevy_ecs::system::Commands) (like entity
+///  creation or entity component addition or removal) are visible only after deferred operations are
+///  applied, typically at the end of the schedule iteration.
+///
+/// ### Time complexity
+/// `EqChanged` is not [`ArchetypeFilter`](bevy_ecs::query::ArchetypeFilter), which practically means
+///  that if query (with `T` component filter) matches million entities, `EqChanged<T>` filter will
+///  iterate over all of them even if none of them were changed.
+///
+/// In order to track changes, `EqChanged` will [`Clone`] values when a modification has been detected.
+///  Usually, the value will only be cloned once per change, but some exceptions occur if an entity
+///  was spawned before the first time a system runs.
+///
+/// ### Examples
+/// ```rust
+/// fn print_moving_objects_system(query: Query<&Name, EqChanged<Transform>>) {
+///     for name in &query {
+///         println!("Entity moved: {:?}", name);
+///     }
+/// }
+/// ```
 pub struct EqChanged<T>(PhantomData<T>);
 
 
-pub struct EqChangedState<T>
-where
-    T : Component
-{
-    query_id : usize,
-    changed  : <Changed<T> as WorldQuery>::State,
-    old      : <Option<&'static mut PreviousValue<T>> as WorldQuery>::State,
-    new      : <&'static T as WorldQuery>::State
-}
+mod private {
+    use super::*;
 
-pub struct EqChangedFetch<'l, T>
-where
-    T : Component
-{
-    world    : DeferredWorld<'l>,
-    query_id : usize,
-    this_run : Tick,
-    changed  : <Changed<T> as WorldQuery>::Fetch<'l>,
-    old      : <Option<&'static mut PreviousValue<T>> as WorldQuery>::Fetch<'l>,
-    new      : <&'static T as WorldQuery>::Fetch<'l>
-}
+    pub struct EqChangedState<T>
+    where
+        T : Component
+    {
+        pub(crate) query_id : usize,
+        pub(crate) changed  : <Changed<T> as WorldQuery>::State,
+        pub(crate) old      : <Option<&'static mut PreviousValue<T>> as WorldQuery>::State,
+        pub(crate) new      : <&'static T as WorldQuery>::State
+    }
 
-impl<'l, T> Clone for EqChangedFetch<'l, T>
-where
-    T : Component
-{
-    fn clone(&self) -> Self { unreachable!() }
+    pub struct EqChangedFetch<'l, T>
+    where
+        T : Component
+    {
+        pub(crate) world    : DeferredWorld<'l>,
+        pub(crate) query_id : usize,
+        pub(crate) this_run : Tick,
+        pub(crate) changed  : <Changed<T> as WorldQuery>::Fetch<'l>,
+        pub(crate) old      : <Option<&'static mut PreviousValue<T>> as WorldQuery>::Fetch<'l>,
+        pub(crate) new      : <&'static T as WorldQuery>::Fetch<'l>
+    }
+
+    impl<'l, T> Clone for EqChangedFetch<'l, T>
+    where
+        T : Component
+    {
+        fn clone(&self) -> Self { unreachable!() }
+    }
+
 }
+use private::*;
 
 
 unsafe impl<T> QueryFilter for EqChanged<T>

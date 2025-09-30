@@ -1,3 +1,6 @@
+#![allow(missing_docs)]
+
+
 use bevy_eqchanged::EqChanged;
 use core::time::Duration;
 use std::time::Instant;

@@ -9,6 +9,7 @@ intmap  = [ "dep:intmap" ]
 
 [lints.rust]
 unused_parens = "allow"
+missing_docs  = "deny"
 
 
 [dependencies.bevy_ecs]
