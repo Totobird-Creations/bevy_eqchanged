@@ -126,77 +126,79 @@ where
     const IS_ARCHETYPAL : bool = false;
 
     unsafe fn filter_fetch(
+        state     : &Self::State,
         fetch     : &mut Self::Fetch<'_>,
         entity    : Entity,
         table_row : TableRow,
     ) -> bool { unsafe {
-        if (! <Changed<T> as QueryFilter>::filter_fetch(&mut fetch.changed, entity, table_row)) {
-            return false;
-        }
-        let old = <Option<&mut PreviousValue<T>> as QueryData>::fetch(&mut fetch.old, entity, table_row);
-        let new = <&T as QueryData>::fetch(&mut fetch.new, entity, table_row);
-        match (old) {
-            // PreviousValue<T> was not in the current query.
-            None => {
-                let query_id = fetch.query_id;
-                let this_run = fetch.this_run;
-                let new      = new.clone();
-                fetch.world.commands().entity(entity).queue(move |mut world : EntityWorldMut| {
-                    match (world.get_mut::<PreviousValue<T>>()) {
-                        // PreviousValue<T> does actually exist. It was just added in the same tick.
-                        Some(mut previous_value) => {
-                            if (new != previous_value.previous) {
-                                previous_value.previous = new;
-                                previous_value.changed  = this_run;
-                            }
-                            let changed = previous_value.changed;
-                            match (previous_value.handled.entry(query_id)) {
-                                HandledMapEntry::Occupied(mut entry) => {
-                                    if (entry.get() != &changed) {
+            if (! <Changed<T> as QueryFilter>::filter_fetch(&state.changed, &mut fetch.changed, entity, table_row)) {
+                return false;
+            }
+            let old = <Option<&mut PreviousValue<T>> as QueryData>::fetch(&state.old, &mut fetch.old, entity, table_row);
+            let new = <&T as QueryData>::fetch(&state.new, &mut fetch.new, entity, table_row);
+            match (old) {
+                // PreviousValue<T> was not in the current query.
+                None => {
+                    let query_id = fetch.query_id;
+                    let this_run = fetch.this_run;
+                    let new      = new.clone();
+                    fetch.world.commands().entity(entity).queue(move |mut world : EntityWorldMut| {
+                        match (world.get_mut::<PreviousValue<T>>()) {
+                            // PreviousValue<T> does actually exist. It was just added in the same tick.
+                            Some(mut previous_value) => {
+                                if (new != previous_value.previous) {
+                                    previous_value.previous = new;
+                                    previous_value.changed  = this_run;
+                                }
+                                let changed = previous_value.changed;
+                                match (previous_value.handled.entry(query_id)) {
+                                    HandledMapEntry::Occupied(mut entry) => {
+                                        if (entry.get() != &changed) {
+                                            entry.insert(changed);
+                                        }
+                                    },
+                                    HandledMapEntry::Vacant(entry) => {
                                         entry.insert(changed);
                                     }
-                                },
-                                HandledMapEntry::Vacant(entry) => {
-                                    entry.insert(changed);
                                 }
+                            },
+                            // PreviousValue<T> does not exist. Add it.
+                            None => {
+                                let mut previous_value = PreviousValue {
+                                    previous : new,
+                                    changed  : this_run,
+                                    handled  : HandledMap::new()
+                                };
+                                previous_value.handled.insert(query_id, this_run);
+                                world.insert(previous_value);
                             }
-                        },
-                        // PreviousValue<T> does not exist. Add it.
-                        None => {
-                            let mut previous_value = PreviousValue {
-                                previous : new,
-                                changed  : this_run,
-                                handled  : HandledMap::new()
-                            };
-                            previous_value.handled.insert(query_id, this_run);
-                            world.insert(previous_value);
                         }
+                    });
+                    true
+                },
+                // PreviousValue<T> was in the current query.
+                Some(mut previous_value) => {
+                    if (new != &previous_value.previous) {
+                        previous_value.previous = new.clone();
+                        previous_value.changed  = fetch.this_run;
                     }
-                });
-                true
-            },
-            // PreviousValue<T> was in the current query.
-            Some(mut previous_value) => {
-                if (new != &previous_value.previous) {
-                    previous_value.previous = new.clone();
-                    previous_value.changed  = fetch.this_run;
-                }
-                let changed = previous_value.changed;
-                match (previous_value.handled.entry(fetch.query_id)) {
-                    HandledMapEntry::Occupied(mut entry) => {
-                        if (entry.get() != &changed) {
+                    let changed = previous_value.changed;
+                    match (previous_value.handled.entry(fetch.query_id)) {
+                        HandledMapEntry::Occupied(mut entry) => {
+                            if (entry.get() != &changed) {
+                                entry.insert(changed);
+                                true
+                            } else { false }
+                        },
+                        HandledMapEntry::Vacant(entry) => {
                             entry.insert(changed);
                             true
-                        } else { false }
-                    },
-                    HandledMapEntry::Vacant(entry) => {
-                        entry.insert(changed);
-                        true
+                        }
                     }
                 }
             }
         }
-    } }
+    }
 }
 
 
@@ -264,7 +266,7 @@ where
 
     fn update_component_access(
         state  : &Self::State,
-        access : &mut FilteredAccess<ComponentId>
+        access : &mut FilteredAccess
     ) {
         <Changed<T> as WorldQuery>::update_component_access(&state.changed, access);
         <Option<&mut PreviousValue<T>> as WorldQuery>::update_component_access(&state.old, access);
